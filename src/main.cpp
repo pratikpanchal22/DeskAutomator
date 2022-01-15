@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include "SSD1306.h"
+#include <WiFiManager.h>   
+#include <WiFi.h>
+#include "time.h"
 
 // onboard LED
 const int LED_BUILTIN = 25;
@@ -15,6 +18,33 @@ const int DELAY_BETWEEN_DISPLAYS = 1500;
 
 SSD1306 display(OLED_I2C_ADDRESS, OLED_SDA, OLED_SCL); 
 int itr;
+
+//time
+const char* ntpServer1 = "time.google.com";
+const char* ntpServer2 = "utcnist.colorado.edu";
+const char* ntpServer3 = "pool.ntp.org";
+/*
+You need to adjust the UTC offset for your timezone in milliseconds. Refer the list of UTC time offsets. Here are some examples for different timezones:
+For UTC -5.00 : -5 * 60 * 60 : -18000
+For UTC +1.00 : 1 * 60 * 60 : 3600
+For UTC +0.00 : 0 * 60 * 60 : 0
+*/
+const long  gmtOffset_sec = -25200;  //MST is UTC-07:00 = -7 * 60 * 60 = -25200
+
+/*
+Change the Daylight offset in milliseconds. If your country observes Daylight saving time set it to 3600. Otherwise, set it to 0.
+*/
+const int   daylightOffset_sec = 3600;
+
+void printLocalTime()
+{
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+    return;
+  }
+  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+}
 
 typedef void (*FuncPtr) (void);
 
@@ -427,22 +457,107 @@ void initializerDemo(){
   }
 }
 
-#define NUMBER_OF_DEMO_FUNCTIONS 10
+void printTimeToDisplay(){
+  preDisplaySetup();
+
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+    return;
+  }
+
+  display.setFont(ArialMT_Plain_16);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  char day_buff[32];
+  strftime(day_buff, 31, "%a, %h %d %Y", &timeinfo);
+  display.drawString(64, 8, day_buff);
+
+  display.setFont(ArialMT_Plain_24);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  char day_buff1[16];
+  strftime(day_buff1, 15, "%H:%M:%S", &timeinfo);
+  display.drawString(64, 26, day_buff1);
+
+
+  delay(2000);
+  sendBufferToDisplay();
+}
+
+void reFetchTimeFromNtpServer(){
+
+  preDisplaySetup();
+
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2, ntpServer3);
+
+  display.setFont(ArialMT_Plain_16);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.drawString(64, 2, "Atomic Time");
+  display.drawString(64, 16, "Servers");
+  
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(6, 28, ntpServer1);
+  display.drawString(6, 38, ntpServer2);
+  display.drawString(6, 48, ntpServer3);
+
+  sendBufferToDisplay();
+
+}
+
+#define NUMBER_OF_DEMO_FUNCTIONS 22
 FuncPtr funcPtrs[NUMBER_OF_DEMO_FUNCTIONS] = {ledBlinkFunction,
+                                              reFetchTimeFromNtpServer,
+                                              printTimeToDisplay,
+                                              printLocalTime,
+                                              printTimeToDisplay,
                                               fontSizeDemoFunction,
+                                              printTimeToDisplay,
                                               overflowTextDemoFunction,
+                                              printTimeToDisplay,
                                               textAlignmentDemoFunction,
+                                              printTimeToDisplay,
                                               displayStars,
+                                              printTimeToDisplay,
                                               objectsDemo,
+                                              printTimeToDisplay,
                                               swipeDisplayMessageDemo,
+                                              printTimeToDisplay,
                                               staticProgressBarDemo,
+                                              printTimeToDisplay,
                                               circleDemo,
+                                              printTimeToDisplay,
                                               animatedProgressBarDemo};
 
 
+#define MAXIMUM_LENGTH_OF_SSID                                     24
+
 void setup() {
+
+  Serial.begin(115200);
+
   //initialize LED
   pinMode(LED_BUILTIN, OUTPUT);
+
+  //WiFiManager
+	//Local intialization. Once its business is done, there is no need to keep it around
+	WiFiManager wifiManager;
+  char apSsidCharArray[MAXIMUM_LENGTH_OF_SSID];
+  uint64_t macAddress = ESP.getEfuseMac();
+  uint64_t macAddress_truncated = macAddress << 40;
+  sprintf(apSsidCharArray, "%s %" PRIu64, "DeskAutomator", (macAddress_truncated>>40));
+  wifiManager.autoConnect(apSsidCharArray);
+  //WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  Serial.println(apSsidCharArray);
+  yield();
+
+  //init and get the time
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2, ntpServer3);
+  printLocalTime();
+  yield();
+
+
+
+  
 
   //initialize display
   pinMode(OLED_RST, OUTPUT);
@@ -451,9 +566,9 @@ void setup() {
   //delay(100);
   //enable display
   digitalWrite(OLED_RST, 1);
+  yield();
 
-  Serial.begin(115200);
-
+  
   display.init();
   initializerDemo();
 }
@@ -461,6 +576,16 @@ void setup() {
 void loop() {
 
   itr++;
+  Serial.println(itr);
+
+  if(itr%2==0){
+    display.invertDisplay();
+  }
+  else {
+    display.normalDisplay();
+  }
+
+  
 
   //Execute each demo function one at a time
   funcPtrs[itr%NUMBER_OF_DEMO_FUNCTIONS]();
